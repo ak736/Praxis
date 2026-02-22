@@ -8,7 +8,6 @@ import {
   Terminal,
   ScrollText,
   Database,
-  X,
 } from "lucide-react";
 import { useIsMobile } from "./ui/use-mobile";
 import type { LucideIcon } from "lucide-react";
@@ -27,7 +26,6 @@ interface ArchNode {
   detailExample: string;
   accentColor: string;
   icon: LucideIcon;
-  // SVG coordinates in viewBox 800x500
   x: number;
   y: number;
   w: number;
@@ -216,7 +214,7 @@ const NODES: ArchNode[] = [
   },
 ];
 
-// ─── Filter ID helper ────────────────────────────────────
+// ─── Helpers ─────────────────────────────────────────────
 
 function glowId(color: string): string {
   if (color === "#D9532B") return "glow-orange";
@@ -224,6 +222,73 @@ function glowId(color: string): string {
   if (color === "#2BC37B") return "glow-green";
   if (color === "#1AC8D2") return "glow-cyan";
   return "glow-white";
+}
+
+function easeInOut(t: number): number {
+  return t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2;
+}
+
+// ─── Pulse Timeline ──────────────────────────────────────
+
+const PULSE_CONFIG = (() => {
+  const raw = [
+    { x: 400, y: 48, travel: 0, pause: 0.5, nodeId: "agent", color: "#FFFFFF" },
+    { x: 400, y: 140, travel: 0.4, pause: 0, nodeId: "", color: "#FFFFFF" },
+    { x: 238, y: 208, travel: 0.45, pause: 0.4, nodeId: "intercept", color: "#D9532B" },
+    { x: 400, y: 208, travel: 0.35, pause: 0.4, nodeId: "verify", color: "#6CE1FF" },
+    { x: 562, y: 208, travel: 0.35, pause: 0.4, nodeId: "enforce", color: "#2BC37B" },
+    { x: 400, y: 260, travel: 0.3, pause: 0, nodeId: "", color: "#2BC37B" },
+    { x: 400, y: 448, travel: 0.6, pause: 0.5, nodeId: "tools", color: "#FFFFFF" },
+  ];
+
+  const totalTime = raw.reduce((s, w) => s + w.travel + w.pause, 0) + 0.5;
+
+  let t = 0;
+  const waypoints = raw.map((w) => {
+    const arrive = (t + w.travel) / totalTime;
+    const depart = (t + w.travel + w.pause) / totalTime;
+    t += w.travel + w.pause;
+    return { ...w, arrive, depart };
+  });
+
+  return { waypoints, duration: totalTime };
+})();
+
+function getPulseState(progress: number) {
+  const { waypoints } = PULSE_CONFIG;
+  const last = waypoints[waypoints.length - 1];
+
+  if (progress > last.depart) {
+    const r = (progress - last.depart) / (1 - last.depart);
+    return {
+      x: last.x + (waypoints[0].x - last.x) * r,
+      y: last.y + (waypoints[0].y - last.y) * r,
+      nodeId: "",
+      color: "#FFFFFF",
+      opacity: Math.max(0, 1 - r * 3),
+    };
+  }
+
+  for (let i = 0; i < waypoints.length; i++) {
+    const wp = waypoints[i];
+    if (progress >= wp.arrive && progress <= wp.depart) {
+      return { x: wp.x, y: wp.y, nodeId: wp.nodeId, color: wp.color, opacity: 1 };
+    }
+    if (i < waypoints.length - 1) {
+      const next = waypoints[i + 1];
+      if (progress > wp.depart && progress < next.arrive) {
+        const seg = easeInOut((progress - wp.depart) / (next.arrive - wp.depart));
+        return {
+          x: wp.x + (next.x - wp.x) * seg,
+          y: wp.y + (next.y - wp.y) * seg,
+          nodeId: "",
+          color: wp.color,
+          opacity: 1,
+        };
+      }
+    }
+  }
+  return { x: waypoints[0].x, y: waypoints[0].y, nodeId: "", color: "#FFFFFF", opacity: 0 };
 }
 
 // ─── Main Export ─────────────────────────────────────────
@@ -237,6 +302,12 @@ export function ArchitectureSection() {
   const [hoveredId, setHoveredId] = useState<string | null>(null);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [containerWidth, setContainerWidth] = useState(800);
+  const [pulseActiveNode, setPulseActiveNode] = useState("");
+
+  const pulseRef = useRef<SVGCircleElement>(null);
+  const pulseGlowRef = useRef<SVGCircleElement>(null);
+  const activeNodeRef = useRef("");
+  const progressRef = useRef(0);
 
   useEffect(() => {
     const el = diagramRef.current;
@@ -248,32 +319,81 @@ export function ArchitectureSection() {
     return () => ro.disconnect();
   }, []);
 
+  // Pulse animation (direct DOM for performance)
+  const isPaused = !!hoveredId || !!selectedId;
+  const isPausedRef = useRef(isPaused);
+  isPausedRef.current = isPaused;
+
+  useEffect(() => {
+    if (!inView || isMobile) return;
+    const circle = pulseRef.current;
+    const glow = pulseGlowRef.current;
+    if (!circle || !glow) return;
+
+    let frame: number;
+    let lastTime = performance.now();
+
+    function tick(now: number) {
+      const dt = (now - lastTime) / 1000;
+      lastTime = now;
+
+      if (!isPausedRef.current) {
+        progressRef.current = (progressRef.current + dt / PULSE_CONFIG.duration) % 1;
+      }
+
+      const s = getPulseState(progressRef.current);
+      circle.setAttribute("cx", String(s.x));
+      circle.setAttribute("cy", String(s.y));
+      circle.style.opacity = String(s.opacity);
+      circle.style.fill = s.color;
+      glow.setAttribute("cx", String(s.x));
+      glow.setAttribute("cy", String(s.y));
+      glow.style.opacity = String(s.opacity * 0.15);
+      glow.style.fill = s.color;
+
+      if (s.nodeId !== activeNodeRef.current) {
+        activeNodeRef.current = s.nodeId;
+        setPulseActiveNode(s.nodeId);
+      }
+
+      frame = requestAnimationFrame(tick);
+    }
+
+    frame = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(frame);
+  }, [inView, isMobile]);
+
   const handleHover = useCallback((id: string) => setHoveredId(id), []);
   const handleLeave = useCallback(() => setHoveredId(null), []);
   const handleClick = useCallback(
-    (id: string) => setSelectedId((prev) => (prev === id ? null : id)),
+    (id: string) => {
+      setSelectedId((prev) => (prev === id ? null : id));
+    },
     []
   );
-  const handleClose = useCallback(() => setSelectedId(null), []);
+  const handleBgClick = useCallback(() => setSelectedId(null), []);
 
   const nodeOpacity = (id: string) => {
-    if (selectedId) return id === selectedId ? 1 : 0.2;
-    if (hoveredId) {
-      if (id === hoveredId) return 1;
-      return 0.35;
-    }
-    return 0.6;
+    if (selectedId) return id === selectedId ? 1 : 0.25;
+    if (hoveredId) return id === hoveredId ? 1 : 0.35;
+    if (pulseActiveNode === id) return 0.85;
+    return 0.5;
   };
 
   const connectorOpacity = (fromId: string, toId: string) => {
     if (selectedId)
-      return fromId === selectedId || toId === selectedId ? 0.6 : 0.06;
+      return fromId === selectedId || toId === selectedId ? 0.5 : 0.06;
     if (hoveredId)
-      return fromId === hoveredId || toId === hoveredId ? 0.45 : 0.1;
-    return 0.18;
+      return fromId === hoveredId || toId === hoveredId ? 0.4 : 0.1;
+    return 0.2;
   };
 
-  const isLit = (id: string) => id === selectedId || id === hoveredId;
+  const isLit = (id: string) =>
+    id === selectedId || id === hoveredId || id === pulseActiveNode;
+
+  const selectedNode = selectedId
+    ? NODES.find((n) => n.id === selectedId)!
+    : null;
 
   return (
     <section
@@ -343,8 +463,8 @@ export function ArchitectureSection() {
                 margin: 0,
               }}
             >
-              Hover to preview. Click to explore each layer of the PRAXIS
-              enforcement stack.
+              Watch the data flow. Click any node to inspect the enforcement
+              pipeline.
             </p>
           </div>
         </motion.div>
@@ -358,9 +478,10 @@ export function ArchitectureSection() {
           style={{
             position: "relative",
             border: "1px solid rgba(255,255,255,0.08)",
-            borderRadius: 4,
+            borderRadius: selectedId ? "4px 4px 0 0" : 4,
             background: "#0D0F12",
             overflow: "hidden",
+            transition: "border-radius 0.3s ease",
           }}
         >
           {/* Grid background */}
@@ -369,7 +490,7 @@ export function ArchitectureSection() {
               position: "absolute",
               inset: 0,
               backgroundImage:
-                "linear-gradient(rgba(255,255,255,0.025) 1px, transparent 1px), linear-gradient(90deg, rgba(255,255,255,0.025) 1px, transparent 1px)",
+                "linear-gradient(rgba(255,255,255,0.02) 1px, transparent 1px), linear-gradient(90deg, rgba(255,255,255,0.02) 1px, transparent 1px)",
               backgroundSize: "40px 40px",
               pointerEvents: "none",
             }}
@@ -388,6 +509,7 @@ export function ArchitectureSection() {
               viewBox="0 0 800 500"
               style={{ width: "100%", height: "auto", display: "block" }}
               preserveAspectRatio="xMidYMid meet"
+              onClick={handleBgClick}
             >
               <defs>
                 <filter id="glow-white" x="-50%" y="-50%" width="200%" height="200%">
@@ -405,33 +527,52 @@ export function ArchitectureSection() {
                 <filter id="glow-cyan" x="-50%" y="-50%" width="200%" height="200%">
                   <feDropShadow dx="0" dy="0" stdDeviation="8" floodColor="#1AC8D2" floodOpacity="0.4" />
                 </filter>
+                <filter id="glow-pulse" x="-200%" y="-200%" width="500%" height="500%">
+                  <feGaussianBlur in="SourceGraphic" stdDeviation="5" result="blur" />
+                  <feMerge>
+                    <feMergeNode in="blur" />
+                    <feMergeNode in="SourceGraphic" />
+                  </feMerge>
+                </filter>
+                <style>{`
+                  .march { animation: marchFlow 1.2s linear infinite; }
+                  @keyframes marchFlow { to { stroke-dashoffset: -10; } }
+                `}</style>
               </defs>
 
-              {/* ── Connectors (rendered behind boxes) ── */}
+              {/* ── Connectors (marching ants) ── */}
 
-              {/* Agent → Enforcement Layer */}
+              {/* Agent → Enforcement */}
               <g opacity={connectorOpacity("agent", "intercept")} style={{ transition: "opacity 0.35s ease" }}>
-                <line x1="400" y1="76" x2="400" y2="132" stroke="rgba(255,255,255,0.5)" strokeWidth="1" strokeDasharray="3,3" />
+                <line x1="400" y1="76" x2="400" y2="132" stroke="rgba(255,255,255,0.5)" strokeWidth="1" strokeDasharray="6,4" className="march" />
                 <polygon points="395,130 400,140 405,130" fill="rgba(255,255,255,0.5)" />
               </g>
               <text x="415" y="110" fill="rgba(255,255,255,0.18)" fontFamily="JetBrains Mono, monospace" fontSize="8">action()</text>
 
-              {/* Enforcement → Audit (dashed) */}
+              {/* Enforcement → Audit */}
               <g opacity={connectorOpacity("intercept", "audit")} style={{ transition: "opacity 0.35s ease" }}>
-                <line x1="168" y1="244" x2="100" y2="300" stroke="rgba(26,200,210,0.45)" strokeWidth="1" strokeDasharray="4,4" />
+                <line x1="168" y1="244" x2="100" y2="300" stroke="rgba(26,200,210,0.45)" strokeWidth="1" strokeDasharray="6,4" className="march" />
               </g>
 
-              {/* Enforcement → Policy (dashed) */}
+              {/* Enforcement → Policy */}
               <g opacity={connectorOpacity("verify", "policy")} style={{ transition: "opacity 0.35s ease" }}>
-                <line x1="632" y1="244" x2="700" y2="300" stroke="rgba(26,200,210,0.45)" strokeWidth="1" strokeDasharray="4,4" />
+                <line x1="632" y1="244" x2="700" y2="300" stroke="rgba(26,200,210,0.45)" strokeWidth="1" strokeDasharray="6,4" className="march" />
               </g>
 
               {/* Enforcement → Tools */}
               <g opacity={connectorOpacity("enforce", "tools")} style={{ transition: "opacity 0.35s ease" }}>
-                <line x1="400" y1="260" x2="400" y2="410" stroke="rgba(255,255,255,0.5)" strokeWidth="1" strokeDasharray="3,3" />
+                <line x1="400" y1="260" x2="400" y2="410" stroke="rgba(255,255,255,0.5)" strokeWidth="1" strokeDasharray="6,4" className="march" />
                 <polygon points="395,408 400,418 405,408" fill="rgba(255,255,255,0.5)" />
               </g>
               <text x="415" y="350" fill="rgba(255,255,255,0.18)" fontFamily="JetBrains Mono, monospace" fontSize="8">verified</text>
+
+              {/* Inner connectors: Intercept → Verify → Enforce */}
+              <g opacity={hoveredId || selectedId ? 0.25 : 0.2} style={{ transition: "opacity 0.35s ease" }}>
+                <line x1={308} y1={208} x2={330} y2={208} stroke="rgba(255,255,255,0.3)" strokeWidth="1" strokeDasharray="6,4" className="march" />
+                <polygon points="327,205 335,208 327,211" fill="rgba(255,255,255,0.3)" />
+                <line x1={470} y1={208} x2={492} y2={208} stroke="rgba(255,255,255,0.3)" strokeWidth="1" strokeDasharray="6,4" className="march" />
+                <polygon points="489,205 497,208 489,211" fill="rgba(255,255,255,0.3)" />
+              </g>
 
               {/* ── AI Agent ── */}
               <g
@@ -439,7 +580,7 @@ export function ArchitectureSection() {
                 style={{ transition: "opacity 0.35s ease", cursor: "pointer" }}
                 onMouseEnter={() => handleHover("agent")}
                 onMouseLeave={handleLeave}
-                onClick={() => handleClick("agent")}
+                onClick={(e) => { e.stopPropagation(); handleClick("agent"); }}
               >
                 <rect x={300} y={20} width={200} height={56} rx={3}
                   fill={isLit("agent") ? "#1F2227" : "#161819"}
@@ -466,20 +607,11 @@ export function ArchitectureSection() {
                 opacity={selectedId && selectedId !== "intercept" && selectedId !== "verify" && selectedId !== "enforce" ? 0.25 : 0.9}
                 style={{ transition: "opacity 0.35s ease, stroke 0.35s ease" }}
               />
-              {/* Header band */}
               <rect x={150} y={140} width={500} height={22} rx={3} fill="rgba(217,83,43,0.1)" />
               <text x={400} y={155} textAnchor="middle" fill="#D9532B" fontFamily="Inter, sans-serif" fontSize="9.5" fontWeight="700" letterSpacing="0.12em"
                 opacity={selectedId && selectedId !== "intercept" && selectedId !== "verify" && selectedId !== "enforce" ? 0.25 : 0.85}
                 style={{ transition: "opacity 0.35s ease" }}
               >PRAXIS ENFORCEMENT LAYER</text>
-
-              {/* Inner connectors: Intercept → Verify → Enforce */}
-              <g opacity={hoveredId || selectedId ? 0.25 : 0.18} style={{ transition: "opacity 0.35s ease" }}>
-                <line x1={308} y1={208} x2={330} y2={208} stroke="rgba(255,255,255,0.3)" strokeWidth="1" />
-                <polygon points="327,205 335,208 327,211" fill="rgba(255,255,255,0.3)" />
-                <line x1={470} y1={208} x2={492} y2={208} stroke="rgba(255,255,255,0.3)" strokeWidth="1" />
-                <polygon points="489,205 497,208 489,211" fill="rgba(255,255,255,0.3)" />
-              </g>
 
               {/* ── Intercept ── */}
               <g
@@ -487,7 +619,7 @@ export function ArchitectureSection() {
                 style={{ transition: "opacity 0.35s ease", cursor: "pointer" }}
                 onMouseEnter={() => handleHover("intercept")}
                 onMouseLeave={handleLeave}
-                onClick={() => handleClick("intercept")}
+                onClick={(e) => { e.stopPropagation(); handleClick("intercept"); }}
               >
                 <rect x={168} y={172} width={140} height={72} rx={3}
                   fill={isLit("intercept") ? "#1C1614" : "#111214"}
@@ -512,7 +644,7 @@ export function ArchitectureSection() {
                 style={{ transition: "opacity 0.35s ease", cursor: "pointer" }}
                 onMouseEnter={() => handleHover("verify")}
                 onMouseLeave={handleLeave}
-                onClick={() => handleClick("verify")}
+                onClick={(e) => { e.stopPropagation(); handleClick("verify"); }}
               >
                 <rect x={330} y={172} width={140} height={72} rx={3}
                   fill={isLit("verify") ? "#121A1E" : "#111214"}
@@ -537,7 +669,7 @@ export function ArchitectureSection() {
                 style={{ transition: "opacity 0.35s ease", cursor: "pointer" }}
                 onMouseEnter={() => handleHover("enforce")}
                 onMouseLeave={handleLeave}
-                onClick={() => handleClick("enforce")}
+                onClick={(e) => { e.stopPropagation(); handleClick("enforce"); }}
               >
                 <rect x={492} y={172} width={140} height={72} rx={3}
                   fill={isLit("enforce") ? "#121C16" : "#111214"}
@@ -562,7 +694,7 @@ export function ArchitectureSection() {
                 style={{ transition: "opacity 0.35s ease", cursor: "pointer" }}
                 onMouseEnter={() => handleHover("audit")}
                 onMouseLeave={handleLeave}
-                onClick={() => handleClick("audit")}
+                onClick={(e) => { e.stopPropagation(); handleClick("audit"); }}
               >
                 <rect x={20} y={300} width={160} height={68} rx={3}
                   fill={isLit("audit") ? "#121A1D" : "#161819"}
@@ -587,7 +719,7 @@ export function ArchitectureSection() {
                 style={{ transition: "opacity 0.35s ease", cursor: "pointer" }}
                 onMouseEnter={() => handleHover("policy")}
                 onMouseLeave={handleLeave}
-                onClick={() => handleClick("policy")}
+                onClick={(e) => { e.stopPropagation(); handleClick("policy"); }}
               >
                 <rect x={620} y={300} width={160} height={68} rx={3}
                   fill={isLit("policy") ? "#121A1D" : "#161819"}
@@ -612,7 +744,7 @@ export function ArchitectureSection() {
                 style={{ transition: "opacity 0.35s ease", cursor: "pointer" }}
                 onMouseEnter={() => handleHover("tools")}
                 onMouseLeave={handleLeave}
-                onClick={() => handleClick("tools")}
+                onClick={(e) => { e.stopPropagation(); handleClick("tools"); }}
               >
                 <rect x={290} y={420} width={220} height={56} rx={3}
                   fill={isLit("tools") ? "#1F2227" : "#161819"}
@@ -630,6 +762,23 @@ export function ArchitectureSection() {
                 <text x={400} y={464} textAnchor="middle" fill="rgba(255,255,255,0.18)" fontFamily="JetBrains Mono, monospace" fontSize="8">APIs · DBs · Services</text>
                 <rect x={280} y={410} width={240} height={76} fill="transparent" />
               </g>
+
+              {/* ── Data Pulse ── */}
+              <circle
+                ref={pulseGlowRef}
+                cx="400" cy="48" r="14"
+                fill="#FFFFFF"
+                opacity="0"
+                style={{ pointerEvents: "none" }}
+              />
+              <circle
+                ref={pulseRef}
+                cx="400" cy="48" r="3.5"
+                fill="#FFFFFF"
+                opacity="0"
+                filter="url(#glow-pulse)"
+                style={{ pointerEvents: "none" }}
+              />
             </svg>
           )}
 
@@ -644,24 +793,20 @@ export function ArchitectureSection() {
               )}
             </AnimatePresence>
           )}
-
-          {/* ── Detail Panel (pinned on click) ── */}
-          <AnimatePresence>
-            {selectedId && (
-              <DetailPanel
-                node={NODES.find((n) => n.id === selectedId)!}
-                isMobile={isMobile}
-                onClose={handleClose}
-              />
-            )}
-          </AnimatePresence>
         </motion.div>
+
+        {/* ── Inline Expansion (below diagram, desktop) ── */}
+        <AnimatePresence>
+          {selectedNode && !isMobile && (
+            <InlineExpansion node={selectedNode} />
+          )}
+        </AnimatePresence>
       </div>
     </section>
   );
 }
 
-// ─── Hover Tooltip ───────────────────────────────────────
+// ─── Hover Tooltip (simplified) ──────────────────────────
 
 function HoverTooltip({
   node,
@@ -670,19 +815,9 @@ function HoverTooltip({
   node: ArchNode;
   containerWidth: number;
 }) {
-  const scale = containerWidth / 800;
-  const vh = 500; // viewBox height
-  const cx = (node.x + node.w / 2) * scale;
-  const cy = (node.y + node.h / 2) * (containerWidth * vh / 800) / vh * vh / (containerWidth * vh / 800) * (containerWidth * vh / 800);
-  const cyScaled = (node.y + node.h / 2) * (containerWidth / 800);
-  const topEdge = node.y * (containerWidth / 800) * (500 / 800);
-
-  // Simplified: convert SVG coords to pixel coords
-  // The SVG is width:100%, height:auto, viewBox 800x500.
-  // Rendered height = containerWidth * (500/800)
   const svgH = containerWidth * (500 / 800);
-  const pxX = (node.x + node.w / 2) / 800 * containerWidth;
-  const pxY = (node.y + node.h / 2) / 500 * svgH;
+  const pxX = ((node.x + node.w / 2) / 800) * containerWidth;
+  const pxY = ((node.y + node.h / 2) / 500) * svgH;
 
   let style: React.CSSProperties = {};
   switch (node.tooltipPosition) {
@@ -705,19 +840,19 @@ function HoverTooltip({
   return (
     <motion.div
       key={`tooltip-${node.id}`}
-      initial={{ opacity: 0, y: 5, scale: 0.97 }}
+      initial={{ opacity: 0, y: 4, scale: 0.97 }}
       animate={{ opacity: 1, y: 0, scale: 1 }}
       exit={{ opacity: 0, scale: 0.98 }}
-      transition={{ duration: 0.22, ease: EASE }}
+      transition={{ duration: 0.2, ease: EASE }}
       style={{
         position: "absolute",
         ...style,
-        background: "rgba(13,15,18,0.94)",
+        background: "rgba(13,15,18,0.92)",
         backdropFilter: "blur(12px)",
-        border: `1px solid ${isNeutral ? "rgba(255,255,255,0.12)" : node.accentColor + "35"}`,
-        borderRadius: 6,
-        padding: "10px 14px",
-        maxWidth: 220,
+        border: `1px solid ${isNeutral ? "rgba(255,255,255,0.12)" : node.accentColor + "30"}`,
+        borderRadius: 5,
+        padding: "8px 12px",
+        maxWidth: 200,
         pointerEvents: "none",
         zIndex: 10,
       }}
@@ -725,20 +860,9 @@ function HoverTooltip({
       <div
         style={{
           fontFamily: "'Inter', sans-serif",
-          fontSize: 11.5,
-          fontWeight: 600,
-          color: isNeutral ? "rgba(255,255,255,0.85)" : node.accentColor,
-          marginBottom: 4,
-        }}
-      >
-        {node.label}
-      </div>
-      <div
-        style={{
-          fontFamily: "'Inter', sans-serif",
           fontSize: 11,
-          lineHeight: 1.5,
-          color: "rgba(255,255,255,0.45)",
+          lineHeight: 1.45,
+          color: "rgba(255,255,255,0.5)",
         }}
       >
         {node.tooltipDescription}
@@ -747,181 +871,51 @@ function HoverTooltip({
   );
 }
 
-// ─── Detail Panel ────────────────────────────────────────
+// ─── Inline Expansion ────────────────────────────────────
 
-function DetailPanel({
-  node,
-  isMobile,
-  onClose,
-}: {
-  node: ArchNode;
-  isMobile: boolean;
-  onClose: () => void;
-}) {
-  const Icon = node.icon;
+function InlineExpansion({ node }: { node: ArchNode }) {
   const isNeutral = node.accentColor === "#FFFFFF";
-  const accent = isNeutral ? "rgba(255,255,255,0.5)" : node.accentColor;
+  const accent = isNeutral ? "rgba(255,255,255,0.4)" : node.accentColor;
+  const Icon = node.icon;
 
   return (
-    <>
-      {/* Dim overlay */}
-      <motion.div
-        key="panel-overlay"
-        initial={{ opacity: 0 }}
-        animate={{ opacity: 1 }}
-        exit={{ opacity: 0 }}
-        transition={{ duration: 0.3 }}
-        onClick={onClose}
+    <motion.div
+      key={`expand-${node.id}`}
+      initial={{ height: 0, opacity: 0 }}
+      animate={{ height: "auto", opacity: 1 }}
+      exit={{ height: 0, opacity: 0 }}
+      transition={{ duration: 0.4, ease: EASE }}
+      style={{ overflow: "hidden" }}
+    >
+      <div
         style={{
-          position: "absolute",
-          inset: 0,
-          background: "rgba(10,12,14,0.55)",
-          zIndex: 15,
-          cursor: "pointer",
-        }}
-      />
-
-      {/* Panel */}
-      <motion.div
-        key={`panel-${node.id}`}
-        initial={isMobile ? { y: "100%" } : { x: "100%" }}
-        animate={isMobile ? { y: 0 } : { x: 0 }}
-        exit={isMobile ? { y: "100%" } : { x: "100%" }}
-        transition={{ duration: 0.45, ease: EASE }}
-        style={{
-          position: "absolute",
-          ...(isMobile
-            ? { bottom: 0, left: 0, right: 0, maxHeight: "65%", borderTop: `1px solid ${accent}30` }
-            : { top: 0, right: 0, bottom: 0, width: 340, borderLeft: `1px solid ${accent}25` }),
-          background: "#111316",
-          zIndex: 20,
-          overflowY: "auto",
-          padding: "24px",
-          display: "flex",
-          flexDirection: "column",
-          gap: 16,
+          background: "#0A0C0F",
+          borderLeft: "1px solid rgba(255,255,255,0.06)",
+          borderRight: "1px solid rgba(255,255,255,0.06)",
+          borderBottom: "1px solid rgba(255,255,255,0.06)",
+          borderRadius: "0 0 4px 4px",
         }}
       >
-        {/* Close button */}
-        <button
-          onClick={onClose}
-          style={{
-            position: "absolute",
-            top: 14,
-            right: 14,
-            background: "rgba(255,255,255,0.04)",
-            border: "1px solid rgba(255,255,255,0.08)",
-            borderRadius: 4,
-            width: 28,
-            height: 28,
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "center",
-            cursor: "pointer",
-            color: "rgba(255,255,255,0.4)",
-            padding: 0,
-          }}
-        >
-          <X size={14} />
-        </button>
+        {/* Accent bar */}
+        <div style={{ height: 2, background: accent, opacity: 0.8 }} />
 
-        {/* Icon + Title */}
-        <div style={{ display: "flex", alignItems: "center", gap: 12, paddingRight: 36 }}>
-          <div
-            style={{
-              width: 40,
-              height: 40,
-              borderRadius: 6,
-              background: `${accent}15`,
-              border: `1px solid ${accent}30`,
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "center",
-              flexShrink: 0,
-            }}
-          >
-            <Icon size={18} color={accent} />
-          </div>
-          <div>
-            <div
+        <div style={{ padding: "14px 20px 16px" }}>
+          {/* Title row */}
+          <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 12 }}>
+            <Icon size={13} color={accent} />
+            <span
               style={{
                 fontFamily: "'Inter', sans-serif",
-                fontSize: 10,
-                fontWeight: 700,
-                letterSpacing: "0.1em",
-                textTransform: "uppercase",
-                color: accent,
-                marginBottom: 2,
-              }}
-            >
-              {node.label}
-            </div>
-            <div
-              style={{
-                fontFamily: "'Inter', sans-serif",
-                fontSize: 14.5,
+                fontSize: 11.5,
                 fontWeight: 600,
-                color: "#FFFFFF",
+                color: accent,
               }}
             >
               {node.detailTitle}
-            </div>
+            </span>
           </div>
-        </div>
 
-        {/* Divider */}
-        <div style={{ height: 1, background: "rgba(255,255,255,0.06)" }} />
-
-        {/* Bullets */}
-        <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-          {node.detailBullets.map((bullet, i) => (
-            <div key={i} style={{ display: "flex", alignItems: "flex-start", gap: 10 }}>
-              <div
-                style={{
-                  width: 4,
-                  height: 4,
-                  borderRadius: "50%",
-                  background: accent,
-                  marginTop: 7,
-                  flexShrink: 0,
-                  opacity: 0.7,
-                }}
-              />
-              <span
-                style={{
-                  fontFamily: "'Inter', sans-serif",
-                  fontSize: 12.5,
-                  lineHeight: 1.6,
-                  color: "rgba(255,255,255,0.5)",
-                }}
-              >
-                {bullet}
-              </span>
-            </div>
-          ))}
-        </div>
-
-        {/* Code example */}
-        <div
-          style={{
-            background: "#0A0C0E",
-            border: "1px solid rgba(255,255,255,0.06)",
-            borderRadius: 4,
-            padding: "12px 14px",
-          }}
-        >
-          <div
-            style={{
-              fontFamily: "'JetBrains Mono', monospace",
-              fontSize: 9,
-              color: "rgba(255,255,255,0.22)",
-              letterSpacing: "0.08em",
-              textTransform: "uppercase",
-              marginBottom: 8,
-            }}
-          >
-            Example
-          </div>
+          {/* Code snippet */}
           <pre
             style={{
               fontFamily: "'JetBrains Mono', monospace",
@@ -931,17 +925,21 @@ function DetailPanel({
               margin: 0,
               whiteSpace: "pre-wrap",
               wordBreak: "break-word",
+              background: "rgba(0,0,0,0.35)",
+              borderRadius: 4,
+              padding: "12px 14px",
+              border: "1px solid rgba(255,255,255,0.04)",
             }}
           >
             {node.detailExample}
           </pre>
         </div>
-      </motion.div>
-    </>
+      </div>
+    </motion.div>
   );
 }
 
-// ─── Mobile Diagram ──────────────────────────────────────
+// ─── Mobile Components ───────────────────────────────────
 
 function MobileDiagram({
   nodes,
@@ -1006,7 +1004,6 @@ function MobileDiagram({
       <MobileArrow />
       <MobileCard node={tools} isSelected={selectedId === "tools"} onClick={() => onNodeClick("tools")} opacity={nodeOpacity("tools")} delay={0.32} inView={inView} />
 
-      {/* Side elements */}
       <div style={{ display: "flex", gap: 8, width: "100%", marginTop: 16 }}>
         <div style={{ flex: 1 }}>
           <MobileCard node={audit} isSelected={selectedId === "audit"} onClick={() => onNodeClick("audit")} opacity={nodeOpacity("audit")} delay={0.38} inView={inView} />
@@ -1043,43 +1040,84 @@ function MobileCard({
       initial={{ opacity: 0, y: 12 }}
       animate={inView ? { opacity: opacity, y: 0 } : {}}
       transition={{ duration: 0.5, delay, ease: EASE }}
-      onClick={onClick}
-      style={{
-        width: "100%",
-        background: isSelected ? "#1A1D22" : "#131517",
-        border: `1px solid ${isSelected ? accent : (isNeutral ? "rgba(255,255,255,0.06)" : node.accentColor + "20")}`,
-        borderRadius: 6,
-        padding: "12px 14px",
-        display: "flex",
-        alignItems: "center",
-        gap: 10,
-        cursor: "pointer",
-        transition: "background 0.25s ease, border-color 0.25s ease",
-      }}
+      style={{ width: "100%" }}
     >
-      <Icon size={15} color={accent} style={{ flexShrink: 0 }} />
-      <div>
-        <div
-          style={{
-            fontFamily: "'Inter', sans-serif",
-            fontSize: 12.5,
-            fontWeight: 600,
-            color: isSelected ? "rgba(255,255,255,0.9)" : "rgba(255,255,255,0.6)",
-          }}
-        >
-          {node.label}
-        </div>
-        <div
-          style={{
-            fontFamily: "'JetBrains Mono', monospace",
-            fontSize: 9,
-            color: "rgba(255,255,255,0.2)",
-            marginTop: 2,
-          }}
-        >
-          {node.subtitle}
+      <div
+        onClick={onClick}
+        style={{
+          width: "100%",
+          background: isSelected ? "#1A1D22" : "#131517",
+          border: `1px solid ${isSelected ? accent : isNeutral ? "rgba(255,255,255,0.06)" : node.accentColor + "20"}`,
+          borderRadius: isSelected ? "6px 6px 0 0" : 6,
+          padding: "12px 14px",
+          display: "flex",
+          alignItems: "center",
+          gap: 10,
+          cursor: "pointer",
+          transition: "background 0.25s ease, border-color 0.25s ease, border-radius 0.2s ease",
+        }}
+      >
+        <Icon size={15} color={accent} style={{ flexShrink: 0 }} />
+        <div>
+          <div
+            style={{
+              fontFamily: "'Inter', sans-serif",
+              fontSize: 12.5,
+              fontWeight: 600,
+              color: isSelected ? "rgba(255,255,255,0.9)" : "rgba(255,255,255,0.6)",
+            }}
+          >
+            {node.label}
+          </div>
+          <div
+            style={{
+              fontFamily: "'JetBrains Mono', monospace",
+              fontSize: 9,
+              color: "rgba(255,255,255,0.2)",
+              marginTop: 2,
+            }}
+          >
+            {node.subtitle}
+          </div>
         </div>
       </div>
+
+      {/* Inline expansion for mobile */}
+      <AnimatePresence>
+        {isSelected && (
+          <motion.div
+            initial={{ height: 0, opacity: 0 }}
+            animate={{ height: "auto", opacity: 1 }}
+            exit={{ height: 0, opacity: 0 }}
+            transition={{ duration: 0.35, ease: EASE }}
+            style={{ overflow: "hidden" }}
+          >
+            <div
+              style={{
+                background: "#0A0C0F",
+                border: `1px solid ${isNeutral ? "rgba(255,255,255,0.06)" : node.accentColor + "25"}`,
+                borderTop: `2px solid ${accent}`,
+                borderRadius: "0 0 6px 6px",
+                padding: "12px",
+              }}
+            >
+              <pre
+                style={{
+                  fontFamily: "'JetBrains Mono', monospace",
+                  fontSize: 10,
+                  lineHeight: 1.5,
+                  color: "rgba(255,255,255,0.5)",
+                  margin: 0,
+                  whiteSpace: "pre-wrap",
+                  wordBreak: "break-word",
+                }}
+              >
+                {node.detailExample}
+              </pre>
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
     </motion.div>
   );
 }
@@ -1088,14 +1126,15 @@ function MobileArrow() {
   return (
     <div
       style={{
-        height: 18,
+        height: 22,
         display: "flex",
         flexDirection: "column",
         alignItems: "center",
         justifyContent: "center",
+        gap: 1,
       }}
     >
-      <div style={{ width: 1, height: 10, background: "rgba(255,255,255,0.12)" }} />
+      <div style={{ width: 1, height: 12, background: "rgba(255,255,255,0.12)" }} />
       <div
         style={{
           width: 0,
