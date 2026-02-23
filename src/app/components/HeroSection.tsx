@@ -106,6 +106,7 @@ export function HeroSection() {
           maxWidth: 820,
           padding: "0 1.5rem",
           paddingTop: 80,
+          paddingBottom: "5rem",
         }}
       >
         {/* Status badge */}
@@ -214,7 +215,7 @@ export function HeroSection() {
             display: "flex",
             gap: "2.5rem",
             justifyContent: "center",
-            marginTop: "4rem",
+            marginTop: "clamp(2rem, 4vh, 4rem)",
             flexWrap: "wrap",
           }}
         >
