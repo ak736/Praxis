@@ -278,6 +278,7 @@ export function LiveDemo() {
                 display: "flex",
                 flexDirection: "column",
                 gap: "0.5rem",
+                overflow: "hidden",
               }}
             >
               {log.length === 0 && !running && (

@@ -1,6 +1,7 @@
 import React, { useRef, useState, useEffect } from "react";
 import { motion, useInView } from "motion/react";
 import { Zap, ShieldCheck, BookOpen } from "lucide-react";
+import { useIsMobile } from "./ui/use-mobile";
 
 const EASE = [0.22, 0.9, 0.28, 1] as const;
 
@@ -41,6 +42,7 @@ export function HowItWorksSection() {
   const sectionRef = useRef<HTMLDivElement>(null);
   const inView = useInView(sectionRef, { once: true, margin: "-15%" });
   const [activeStep, setActiveStep] = useState<number | null>(null);
+  const isMobile = useIsMobile();
 
   // Auto-cycle through steps
   useEffect(() => {
@@ -161,8 +163,8 @@ export function HowItWorksSection() {
           ))}
         </div>
 
-        {/* Animated connector SVG */}
-        <ConnectorLine inView={inView} />
+        {/* Animated connector SVG — desktop only */}
+        {!isMobile && <ConnectorLine inView={inView} />}
       </div>
 
       <style>{`

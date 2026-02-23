@@ -101,19 +101,28 @@ export function ProblemSection() {
         <div
           style={{
             display: "grid",
-            gridTemplateColumns: "repeat(auto-fit, minmax(300px, 1fr))",
+            gridTemplateColumns: "repeat(auto-fit, minmax(280px, 1fr))",
             gap: "1.5px",
             background: "rgba(255,255,255,0.06)",
             border: "1px solid rgba(255,255,255,0.06)",
             borderRadius: 2,
             overflow: "hidden",
           }}
+          className="problem-grid"
         >
           {problems.map((p, i) => (
             <ProblemCard key={p.tag} problem={p} index={i} inView={inView} />
           ))}
         </div>
       </div>
+
+      <style>{`
+        @media (max-width: 767px) {
+          .problem-card {
+            border-right: none !important;
+          }
+        }
+      `}</style>
     </section>
   );
 }
@@ -137,9 +146,10 @@ function ProblemCard({
       transition={{ duration: 0.7, delay: 0.1 + index * 0.08, ease: EASE }}
       onMouseEnter={() => setHovered(true)}
       onMouseLeave={() => setHovered(false)}
+      className="problem-card"
       style={{
         background: hovered ? "#151618" : "#0F1114",
-        padding: "2.5rem",
+        padding: "clamp(1.5rem, 5vw, 2.5rem)",
         borderRight: index < 2 ? "1px solid rgba(255,255,255,0.06)" : "none",
         transition: "background 0.25s ease",
         position: "relative",

@@ -61,7 +61,6 @@ export function Navbar() {
         {/* Desktop nav */}
         <div
           style={{
-            display: "flex",
             alignItems: "center",
             gap: "2rem",
           }}

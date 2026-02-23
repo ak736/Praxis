@@ -29,7 +29,7 @@ export function Footer() {
           className="footer-grid"
         >
           {/* Brand column */}
-          <div>
+          <div className="footer-brand">
             <div style={{ marginBottom: "1.25rem" }}>
               <Logo size="sm" />
             </div>
@@ -186,10 +186,8 @@ export function Footer() {
           .footer-grid {
             grid-template-columns: 1fr 1fr !important;
           }
-        }
-        @media (max-width: 480px) {
-          .footer-grid {
-            grid-template-columns: 1fr !important;
+          .footer-brand {
+            grid-column: 1 / -1;
           }
         }
       `}</style>
