@@ -230,15 +230,22 @@ function easeInOut(t: number): number {
 
 // ─── Pulse Timeline ──────────────────────────────────────
 
+const MOBILE_CYCLE = ["agent", "intercept", "verify", "enforce", "audit", "policy", "tools"] as const;
+
 const PULSE_CONFIG = (() => {
   const raw = [
-    { x: 400, y: 48, travel: 0, pause: 0.5, nodeId: "agent", color: "#FFFFFF" },
-    { x: 400, y: 140, travel: 0.4, pause: 0, nodeId: "", color: "#FFFFFF" },
-    { x: 238, y: 208, travel: 0.45, pause: 0.4, nodeId: "intercept", color: "#D9532B" },
-    { x: 400, y: 208, travel: 0.35, pause: 0.4, nodeId: "verify", color: "#6CE1FF" },
-    { x: 562, y: 208, travel: 0.35, pause: 0.4, nodeId: "enforce", color: "#2BC37B" },
-    { x: 400, y: 260, travel: 0.3, pause: 0, nodeId: "", color: "#2BC37B" },
-    { x: 400, y: 448, travel: 0.6, pause: 0.5, nodeId: "tools", color: "#FFFFFF" },
+    { x: 400, y: 48,  travel: 0,    pause: 0.5,  nodeId: "agent",     color: "#FFFFFF" },
+    { x: 400, y: 140, travel: 0.4,  pause: 0,    nodeId: "",          color: "#FFFFFF" },
+    { x: 238, y: 208, travel: 0.45, pause: 0.35, nodeId: "intercept", color: "#D9532B" },
+    { x: 400, y: 208, travel: 0.3,  pause: 0.3,  nodeId: "verify",    color: "#6CE1FF" },
+    { x: 562, y: 208, travel: 0.3,  pause: 0.35, nodeId: "enforce",   color: "#2BC37B" },
+    // enforce → audit log (branch left)
+    { x: 168, y: 244, travel: 0.35, pause: 0,    nodeId: "",          color: "#2BC37B" },
+    { x: 100, y: 334, travel: 0.25, pause: 0.35, nodeId: "audit",     color: "#1AC8D2" },
+    // audit → policy store (traverse across)
+    { x: 700, y: 334, travel: 0.55, pause: 0.35, nodeId: "policy",    color: "#1AC8D2" },
+    // policy → tool execution
+    { x: 400, y: 448, travel: 0.45, pause: 0.5,  nodeId: "tools",     color: "#FFFFFF" },
   ];
 
   const totalTime = raw.reduce((s, w) => s + w.travel + w.pause, 0) + 0.5;
@@ -303,6 +310,7 @@ export function ArchitectureSection() {
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [containerWidth, setContainerWidth] = useState(800);
   const [pulseActiveNode, setPulseActiveNode] = useState("");
+  const [mobileActiveNode, setMobileActiveNode] = useState("");
 
   const pulseRef = useRef<SVGCircleElement>(null);
   const pulseGlowRef = useRef<SVGCircleElement>(null);
@@ -363,6 +371,19 @@ export function ArchitectureSection() {
     return () => cancelAnimationFrame(frame);
   }, [inView, isMobile]);
 
+  // Mobile cycling animation
+  useEffect(() => {
+    if (!inView || !isMobile) return;
+    let idx = 0;
+    const cycle = () => {
+      setMobileActiveNode(MOBILE_CYCLE[idx % MOBILE_CYCLE.length]);
+      idx++;
+    };
+    cycle();
+    const interval = setInterval(cycle, 1400);
+    return () => clearInterval(interval);
+  }, [inView, isMobile]);
+
   const handleHover = useCallback((id: string) => setHoveredId(id), []);
   const handleLeave = useCallback(() => setHoveredId(null), []);
   const handleClick = useCallback(
@@ -376,6 +397,7 @@ export function ArchitectureSection() {
   const nodeOpacity = (id: string) => {
     if (selectedId) return id === selectedId ? 1 : 0.25;
     if (hoveredId) return id === hoveredId ? 1 : 0.35;
+    if (isMobile && mobileActiveNode === id) return 1;
     if (pulseActiveNode === id) return 0.85;
     return 0.5;
   };
@@ -389,7 +411,7 @@ export function ArchitectureSection() {
   };
 
   const isLit = (id: string) =>
-    id === selectedId || id === hoveredId || id === pulseActiveNode;
+    id === selectedId || id === hoveredId || id === pulseActiveNode || (isMobile && id === mobileActiveNode);
 
   const selectedNode = selectedId
     ? NODES.find((n) => n.id === selectedId)!
@@ -503,6 +525,7 @@ export function ArchitectureSection() {
               onNodeClick={handleClick}
               nodeOpacity={nodeOpacity}
               inView={inView}
+              activeNode={mobileActiveNode}
             />
           ) : (
             <svg
@@ -550,13 +573,15 @@ export function ArchitectureSection() {
               <text x="415" y="110" fill="rgba(255,255,255,0.18)" fontFamily="JetBrains Mono, monospace" fontSize="8">action()</text>
 
               {/* Enforcement → Audit */}
-              <g opacity={connectorOpacity("intercept", "audit")} style={{ transition: "opacity 0.35s ease" }}>
+              <g opacity={connectorOpacity("enforce", "audit")} style={{ transition: "opacity 0.35s ease" }}>
                 <line x1="168" y1="244" x2="100" y2="300" stroke="rgba(26,200,210,0.45)" strokeWidth="1" strokeDasharray="6,4" className="march" />
+                <polygon points="100,300 108,298 103,292" fill="rgba(26,200,210,0.45)" />
               </g>
 
               {/* Enforcement → Policy */}
               <g opacity={connectorOpacity("verify", "policy")} style={{ transition: "opacity 0.35s ease" }}>
                 <line x1="632" y1="244" x2="700" y2="300" stroke="rgba(26,200,210,0.45)" strokeWidth="1" strokeDasharray="6,4" className="march" />
+                <polygon points="700,300 692,298 697,292" fill="rgba(26,200,210,0.45)" />
               </g>
 
               {/* Enforcement → Tools */}
@@ -947,12 +972,14 @@ function MobileDiagram({
   onNodeClick,
   nodeOpacity,
   inView,
+  activeNode,
 }: {
   nodes: ArchNode[];
   selectedId: string | null;
   onNodeClick: (id: string) => void;
   nodeOpacity: (id: string) => number;
   inView: boolean;
+  activeNode: string;
 }) {
   const agent = nodes.find((n) => n.id === "agent")!;
   const intercept = nodes.find((n) => n.id === "intercept")!;
@@ -964,7 +991,7 @@ function MobileDiagram({
 
   return (
     <div style={{ padding: "20px 16px", display: "flex", flexDirection: "column", alignItems: "center", gap: 0 }}>
-      <MobileCard node={agent} isSelected={selectedId === "agent"} onClick={() => onNodeClick("agent")} opacity={nodeOpacity("agent")} delay={0} inView={inView} />
+      <MobileCard node={agent} isSelected={selectedId === "agent"} isActive={activeNode === "agent"} onClick={() => onNodeClick("agent")} opacity={nodeOpacity("agent")} delay={0} inView={inView} />
       <MobileArrow />
 
       {/* Enforcement Layer */}
@@ -993,25 +1020,20 @@ function MobileDiagram({
           PRAXIS ENFORCEMENT LAYER
         </div>
         <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-          <MobileCard node={intercept} isSelected={selectedId === "intercept"} onClick={() => onNodeClick("intercept")} opacity={nodeOpacity("intercept")} delay={0.08} inView={inView} />
+          <MobileCard node={intercept} isSelected={selectedId === "intercept"} isActive={activeNode === "intercept"} onClick={() => onNodeClick("intercept")} opacity={nodeOpacity("intercept")} delay={0.08} inView={inView} />
           <MobileArrow />
-          <MobileCard node={verify} isSelected={selectedId === "verify"} onClick={() => onNodeClick("verify")} opacity={nodeOpacity("verify")} delay={0.16} inView={inView} />
+          <MobileCard node={verify} isSelected={selectedId === "verify"} isActive={activeNode === "verify"} onClick={() => onNodeClick("verify")} opacity={nodeOpacity("verify")} delay={0.16} inView={inView} />
           <MobileArrow />
-          <MobileCard node={enforce} isSelected={selectedId === "enforce"} onClick={() => onNodeClick("enforce")} opacity={nodeOpacity("enforce")} delay={0.24} inView={inView} />
+          <MobileCard node={enforce} isSelected={selectedId === "enforce"} isActive={activeNode === "enforce"} onClick={() => onNodeClick("enforce")} opacity={nodeOpacity("enforce")} delay={0.24} inView={inView} />
         </div>
       </div>
 
       <MobileArrow />
-      <MobileCard node={tools} isSelected={selectedId === "tools"} onClick={() => onNodeClick("tools")} opacity={nodeOpacity("tools")} delay={0.32} inView={inView} />
-
-      <div style={{ display: "flex", gap: 8, width: "100%", marginTop: 16 }}>
-        <div style={{ flex: 1 }}>
-          <MobileCard node={audit} isSelected={selectedId === "audit"} onClick={() => onNodeClick("audit")} opacity={nodeOpacity("audit")} delay={0.38} inView={inView} />
-        </div>
-        <div style={{ flex: 1 }}>
-          <MobileCard node={policy} isSelected={selectedId === "policy"} onClick={() => onNodeClick("policy")} opacity={nodeOpacity("policy")} delay={0.44} inView={inView} />
-        </div>
-      </div>
+      <MobileCard node={audit} isSelected={selectedId === "audit"} isActive={activeNode === "audit"} onClick={() => onNodeClick("audit")} opacity={nodeOpacity("audit")} delay={0.3} inView={inView} />
+      <MobileArrow />
+      <MobileCard node={policy} isSelected={selectedId === "policy"} isActive={activeNode === "policy"} onClick={() => onNodeClick("policy")} opacity={nodeOpacity("policy")} delay={0.36} inView={inView} />
+      <MobileArrow label="verified" />
+      <MobileCard node={tools} isSelected={selectedId === "tools"} isActive={activeNode === "tools"} onClick={() => onNodeClick("tools")} opacity={nodeOpacity("tools")} delay={0.44} inView={inView} />
     </div>
   );
 }
@@ -1019,6 +1041,7 @@ function MobileDiagram({
 function MobileCard({
   node,
   isSelected,
+  isActive,
   onClick,
   opacity,
   delay,
@@ -1026,6 +1049,7 @@ function MobileCard({
 }: {
   node: ArchNode;
   isSelected: boolean;
+  isActive?: boolean;
   onClick: () => void;
   opacity: number;
   delay: number;
@@ -1034,6 +1058,7 @@ function MobileCard({
   const Icon = node.icon;
   const isNeutral = node.accentColor === "#FFFFFF";
   const accent = isNeutral ? "rgba(255,255,255,0.4)" : node.accentColor;
+  const lit = isSelected || isActive;
 
   return (
     <motion.div
@@ -1046,8 +1071,8 @@ function MobileCard({
         onClick={onClick}
         style={{
           width: "100%",
-          background: isSelected ? "#1A1D22" : "#131517",
-          border: `1px solid ${isSelected ? accent : isNeutral ? "rgba(255,255,255,0.06)" : node.accentColor + "20"}`,
+          background: lit ? "#1A1D22" : "#131517",
+          border: `1px solid ${lit ? accent : isNeutral ? "rgba(255,255,255,0.06)" : node.accentColor + "20"}`,
           borderRadius: isSelected ? "6px 6px 0 0" : 6,
           padding: "12px 14px",
           display: "flex",
@@ -1055,6 +1080,7 @@ function MobileCard({
           gap: 10,
           cursor: "pointer",
           transition: "background 0.25s ease, border-color 0.25s ease, border-radius 0.2s ease",
+          boxShadow: isActive && !isSelected ? `0 0 12px ${accent}30` : "none",
         }}
       >
         <Icon size={15} color={accent} style={{ flexShrink: 0 }} />
@@ -1064,7 +1090,7 @@ function MobileCard({
               fontFamily: "'Inter', sans-serif",
               fontSize: 12.5,
               fontWeight: 600,
-              color: isSelected ? "rgba(255,255,255,0.9)" : "rgba(255,255,255,0.6)",
+              color: lit ? "rgba(255,255,255,0.9)" : "rgba(255,255,255,0.6)",
             }}
           >
             {node.label}
@@ -1122,16 +1148,17 @@ function MobileCard({
   );
 }
 
-function MobileArrow() {
+function MobileArrow({ label }: { label?: string } = {}) {
   return (
     <div
       style={{
-        height: 22,
+        height: label ? 30 : 22,
         display: "flex",
         flexDirection: "column",
         alignItems: "center",
         justifyContent: "center",
         gap: 1,
+        position: "relative",
       }}
     >
       <div style={{ width: 1, height: 12, background: "rgba(255,255,255,0.12)" }} />
@@ -1144,6 +1171,19 @@ function MobileArrow() {
           borderTop: "4px solid rgba(255,255,255,0.12)",
         }}
       />
+      {label && (
+        <div
+          style={{
+            fontFamily: "'JetBrains Mono', monospace",
+            fontSize: 8,
+            color: "rgba(255,255,255,0.2)",
+            letterSpacing: "0.06em",
+            marginTop: 2,
+          }}
+        >
+          {label}
+        </div>
+      )}
     </div>
   );
 }
