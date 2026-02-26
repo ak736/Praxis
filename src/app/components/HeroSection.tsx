@@ -343,7 +343,8 @@ function ScanLine() {
 function PrimaryButton({ label }: { label: string }) {
   const [hovered, setHovered] = useState(false);
   return (
-    <button
+    <a
+      href="/dashboard"
       onMouseEnter={() => setHovered(true)}
       onMouseLeave={() => setHovered(false)}
       style={{
@@ -360,6 +361,7 @@ function PrimaryButton({ label }: { label: string }) {
         letterSpacing: "0.03em",
         color: "#fff",
         padding: "13px 26px",
+        textDecoration: "none",
         transform: hovered ? "translateY(-4px)" : "translateY(0)",
         boxShadow: hovered ? "0 8px 32px rgba(217,83,43,0.45)" : "0 2px 8px rgba(217,83,43,0.2)",
         transition: "all 0.18s ease",
@@ -367,7 +369,7 @@ function PrimaryButton({ label }: { label: string }) {
     >
       {label}
       <ArrowRight size={14} style={{ transform: hovered ? "translateX(3px)" : "translateX(0)", transition: "transform 0.18s ease" }} />
-    </button>
+    </a>
   );
 }
 

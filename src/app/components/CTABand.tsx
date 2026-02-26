@@ -144,7 +144,8 @@ export function CTABand() {
             flexWrap: "wrap",
           }}
         >
-          <button
+          <a
+            href="/dashboard"
             onMouseEnter={() => setPrimaryHovered(true)}
             onMouseLeave={() => setPrimaryHovered(false)}
             style={{
@@ -160,6 +161,7 @@ export function CTABand() {
               fontWeight: 600,
               letterSpacing: "0.03em",
               color: "#fff",
+              textDecoration: "none",
               padding: "14px 28px",
               transform: primaryHovered ? "translateY(-4px)" : "translateY(0)",
               boxShadow: primaryHovered
@@ -168,7 +170,7 @@ export function CTABand() {
               transition: "all 0.18s ease",
             }}
           >
-            Request a Pilot
+            Try Live Demo
             <ArrowRight
               size={14}
               style={{
@@ -176,7 +178,7 @@ export function CTABand() {
                 transition: "transform 0.18s ease",
               }}
             />
-          </button>
+          </a>
 
           <button
             onMouseEnter={() => setSecondaryHovered(true)}
